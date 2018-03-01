@@ -73,7 +73,6 @@ class OpsworksInteractor
 
   # Polls Opsworks for timeout seconds until deployment_id has completed
   def wait_until_deploy_completion(deployment_id, timeout)
-    started_at = Time.now
     Timeout::timeout(timeout) do
       @opsworks_client.wait_until(
         :deployment_successful,
@@ -146,28 +145,7 @@ class OpsworksInteractor
   # Result: disaster averted.
   DEPLOY_WAIT_TIMEOUT = 600 # max seconds to wait in the queue, once this has expired the process will raise
   def with_deploy_lock
-    if !defined?(Redis::Semaphore)
-      log(<<-MSG.split.join(" "))
-        Redis::Semaphore not found, will attempt to deploy without locking.\n
-        WARNING: this could cause undefined behavior if two or more deploys
-        are run simultanously!\n
-        It is recommended that you use semaphore locking. To fix this, add
-        `gem 'redis-semaphore'` to your Gemfile and run `bundle install`.
-      MSG
-
-      yield
-    elsif !@redis
-      log(<<-MSG.split.join(" "))
-        Redis::Semaphore was found but :redis was not set, will attempt to
-        deploy without locking.\n
-        WARNING: this could cause undefined behavior if two or more deploys
-        are run simultanously!\n
-        It is recommended that you use semaphore locking. To fix this, supply a
-        :redis hash like { host: 'foo', port: 42 } .
-      MSG
-
-      yield
-    else
+    if has_redis_configured?
       s = Redis::Semaphore.new(:deploy, **@redis)
 
       log("Waiting for deploy lock...")
@@ -185,6 +163,35 @@ class OpsworksInteractor
       else
         fail(DeployLockError, "could not get deploy lock within #{DEPLOY_WAIT_TIMEOUT} seconds")
       end
+    else
+      yield
+    end
+  end
+
+  def has_redis_configured?
+    if !defined?(Redis::Semaphore)
+      log(<<-MSG.split.join(" "))
+        Redis::Semaphore not found, will attempt to deploy without locking.\n
+        WARNING: this could cause undefined behavior if two or more deploys
+        are run simultanously!\n
+        It is recommended that you use semaphore locking. To fix this, add
+        `gem 'redis-semaphore'` to your Gemfile and run `bundle install`.
+      MSG
+
+      return false
+    end
+
+    if !@redis
+      log(<<-MSG.split.join(" "))
+        Redis::Semaphore was found but :redis was not set, will attempt to
+        deploy without locking.\n
+        WARNING: this could cause undefined behavior if two or more deploys
+        are run simultanously!\n
+        It is recommended that you use semaphore locking. To fix this, supply a
+        :redis hash like { host: 'foo', port: 42 } .
+      MSG
+
+      return false
     end
   end
 
