@@ -76,12 +76,13 @@ class OpsworksInteractor
     Timeout::timeout(timeout) do
       @opsworks_client.wait_until(
         :deployment_successful,
-        deployment_ids: [deployment_id],
-        max_attempts: nil,
-        before_wait: -> () do
+        deployment_ids: [deployment_id]
+      ) do |w|
+        w.max_attempts = nil
+        w.before_wait do
           log("Waiting for deployment (#{deployment_id}) to finish...")
         end
-      )
+      end
     end
   end
 
