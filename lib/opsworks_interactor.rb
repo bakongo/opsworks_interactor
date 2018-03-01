@@ -95,29 +95,31 @@ class OpsworksInteractor
     log("Starting opsworks deploy for app #{app_id}\n\n")
 
     instances = @opsworks_client.describe_instances(layer_id: layer_id)[:instances]
+      .select { |instance| instance.status == 'online' }
 
     instances.each do |instance|
-      # Only deploy to online instances
-      next unless instance.status == 'online'
-
-      begin
-        log("=== Starting deploy for #{instance.hostname} ===")
-
-        load_balancers = detach_from_elbs(instance: instance)
-
-        deploy(
-          stack_id: stack_id,
-          app_id: app_id,
-          instance_id: instance.instance_id
-        )
-      ensure
-        attach_to_elbs(instance: instance, load_balancers: load_balancers) if load_balancers
-
-        log("=== Done deploying on #{instance.hostname} ===\n\n")
-      end
+      deploy_to_instance(instance, stack_id, app_id)
     end
 
     log("SUCCESS: completed opsworks deploy for all instances on app #{app_id}")
+  end
+
+  def deploy_to_instance(instance, stack_id, app_id)
+    begin
+      log("=== Starting deploy for #{instance.hostname} ===")
+
+      load_balancers = detach_from_elbs(instance: instance)
+
+      deploy(
+        stack_id: stack_id,
+        app_id: app_id,
+        instance_id: instance.instance_id
+      )
+    ensure
+      attach_to_elbs(instance: instance, load_balancers: load_balancers) if load_balancers
+
+      log("=== Done deploying on #{instance.hostname} ===\n\n")
+    end
   end
 
   # Executes the given block only after obtaining an exclusive lock on the
