@@ -212,30 +212,13 @@ class OpsworksInteractor
       fail(ArgumentError, "instance must be a Aws::OpsWorks::Types::Instance struct")
     end
 
-    all_load_balancers =  @elb_client.describe_load_balancers
-                          .load_balancer_descriptions
+    all_load_balancers = @elb_client.describe_load_balancers
+      .load_balancer_descriptions
 
     load_balancers = detach_from(all_load_balancers, instance)
 
-    lb_wait_params = []
-
-    load_balancers.each do |lb|
-      params = {
-        load_balancer_name: lb.load_balancer_name,
-        instances: [{ instance_id: instance.ec2_instance_id }]
-      }
-
-      remaining_instances = @elb_client
-                            .deregister_instances_from_load_balancer(params)
-                            .instances
-
-      log(<<-MSG.split.join(" "))
-        Will detach instance #{instance.ec2_instance_id} from
-        #{lb.load_balancer_name} (remaining attached instances:
-        #{remaining_instances.map(&:instance_id).join(', ')})
-      MSG
-
-      lb_wait_params << params
+    lb_wait_params = load_balancers.map do |lb|
+      wait_params_for_lb(lb)
     end
 
     if lb_wait_params.any?
@@ -250,6 +233,25 @@ class OpsworksInteractor
     end
 
     load_balancers
+  end
+
+  def wait_params_for_lb(lb)
+    params = {
+      load_balancer_name: lb.load_balancer_name,
+      instances: [{ instance_id: instance.ec2_instance_id }]
+    }
+
+    remaining_instances = @elb_client
+      .deregister_instances_from_load_balancer(params)
+      .instances
+
+    log(<<-MSG.split.join(" "))
+        Will detach instance #{instance.ec2_instance_id} from
+        #{lb.load_balancer_name} (remaining attached instances:
+        #{remaining_instances.map(&:instance_id).join(', ')})
+    MSG
+
+    params
   end
 
   # Accepts load_balancers as array of
