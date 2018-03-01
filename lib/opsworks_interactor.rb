@@ -47,7 +47,7 @@ class OpsworksInteractor
   # Blocks until AWS confirms that the deploy was successful
   #
   # Returns a Aws::OpsWorks::Types::CreateDeploymentResult
-  def deploy(stack_id:, app_id:, instance_id:, deploy_timeout: 30.minutes)
+  def deploy(stack_id:, app_id:, instance_id:, deploy_timeout: 30 * 60)
     response = @opsworks_client.create_deployment(
       stack_id:     stack_id,
       app_id:       app_id,
@@ -147,7 +147,7 @@ class OpsworksInteractor
   DEPLOY_WAIT_TIMEOUT = 600 # max seconds to wait in the queue, once this has expired the process will raise
   def with_deploy_lock
     if !defined?(Redis::Semaphore)
-      log(<<-MSG.squish)
+      log(<<-MSG.split.join(" "))
         Redis::Semaphore not found, will attempt to deploy without locking.\n
         WARNING: this could cause undefined behavior if two or more deploys
         are run simultanously!\n
@@ -157,7 +157,7 @@ class OpsworksInteractor
 
       yield
     elsif !@redis
-      log(<<-MSG.squish)
+      log(<<-MSG.split.join(" "))
         Redis::Semaphore was found but :redis was not set, will attempt to
         deploy without locking.\n
         WARNING: this could cause undefined behavior if two or more deploys
@@ -222,7 +222,7 @@ class OpsworksInteractor
                             .deregister_instances_from_load_balancer(params)
                             .instances
 
-      log(<<-MSG.squish)
+      log(<<-MSG.split.join(" "))
         Will detach instance #{instance.ec2_instance_id} from
         #{lb.load_balancer_name} (remaining attached instances:
         #{remaining_instances.map(&:instance_id).join(', ')})
@@ -269,7 +269,7 @@ class OpsworksInteractor
         true
       elsif matched_instance && lb.instances.count == 1
         # We can't detach this instance because it's the only one
-        log(<<-MSG.squish)
+        log(<<-MSG.split.join(" "))
           Will not detach #{instance.ec2_instance_id} from load balancer
           #{lb.load_balancer_name} because it is the only instance connected
         MSG
@@ -339,7 +339,7 @@ class OpsworksInteractor
            load_balancers.all? do |lb|
              lb.is_a?(Aws::ElasticLoadBalancing::Types::LoadBalancerDescription)
            end
-      fail(ArgumentError, <<-MSG.squish)
+    fail(ArgumentError, <<-MSG.split.join(" "))
         :load_balancers must be a collection of
         Aws::ElasticLoadBalancing::Types::LoadBalancerDescription objects
       MSG
