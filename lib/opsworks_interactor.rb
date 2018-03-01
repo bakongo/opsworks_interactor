@@ -73,7 +73,6 @@ class OpsworksInteractor
 
   # Polls Opsworks for timeout seconds until deployment_id has completed
   def wait_until_deploy_completion(deployment_id, timeout)
-    started_at = Time.now
     Timeout::timeout(timeout) do
       @opsworks_client.wait_until(
         :deployment_successful,
@@ -96,29 +95,31 @@ class OpsworksInteractor
     log("Starting opsworks deploy for app #{app_id}\n\n")
 
     instances = @opsworks_client.describe_instances(layer_id: layer_id)[:instances]
+      .select { |instance| instance.status == 'online' }
 
     instances.each do |instance|
-      # Only deploy to online instances
-      next unless instance.status == 'online'
-
-      begin
-        log("=== Starting deploy for #{instance.hostname} ===")
-
-        load_balancers = detach_from_elbs(instance: instance)
-
-        deploy(
-          stack_id: stack_id,
-          app_id: app_id,
-          instance_id: instance.instance_id
-        )
-      ensure
-        attach_to_elbs(instance: instance, load_balancers: load_balancers) if load_balancers
-
-        log("=== Done deploying on #{instance.hostname} ===\n\n")
-      end
+      deploy_to_instance(instance, stack_id, app_id)
     end
 
     log("SUCCESS: completed opsworks deploy for all instances on app #{app_id}")
+  end
+
+  def deploy_to_instance(instance, stack_id, app_id)
+    begin
+      log("=== Starting deploy for #{instance.hostname} ===")
+
+      load_balancers = detach_from_elbs(instance: instance)
+
+      deploy(
+        stack_id: stack_id,
+        app_id: app_id,
+        instance_id: instance.instance_id
+      )
+    ensure
+      attach_to_elbs(instance: instance, load_balancers: load_balancers) if load_balancers
+
+      log("=== Done deploying on #{instance.hostname} ===\n\n")
+    end
   end
 
   # Executes the given block only after obtaining an exclusive lock on the
@@ -146,28 +147,7 @@ class OpsworksInteractor
   # Result: disaster averted.
   DEPLOY_WAIT_TIMEOUT = 600 # max seconds to wait in the queue, once this has expired the process will raise
   def with_deploy_lock
-    if !defined?(Redis::Semaphore)
-      log(<<-MSG.split.join(" "))
-        Redis::Semaphore not found, will attempt to deploy without locking.\n
-        WARNING: this could cause undefined behavior if two or more deploys
-        are run simultanously!\n
-        It is recommended that you use semaphore locking. To fix this, add
-        `gem 'redis-semaphore'` to your Gemfile and run `bundle install`.
-      MSG
-
-      yield
-    elsif !@redis
-      log(<<-MSG.split.join(" "))
-        Redis::Semaphore was found but :redis was not set, will attempt to
-        deploy without locking.\n
-        WARNING: this could cause undefined behavior if two or more deploys
-        are run simultanously!\n
-        It is recommended that you use semaphore locking. To fix this, supply a
-        :redis hash like { host: 'foo', port: 42 } .
-      MSG
-
-      yield
-    else
+    if has_redis_configured?
       s = Redis::Semaphore.new(:deploy, **@redis)
 
       log("Waiting for deploy lock...")
@@ -185,6 +165,35 @@ class OpsworksInteractor
       else
         fail(DeployLockError, "could not get deploy lock within #{DEPLOY_WAIT_TIMEOUT} seconds")
       end
+    else
+      yield
+    end
+  end
+
+  def has_redis_configured?
+    if !defined?(Redis::Semaphore)
+      log(<<-MSG.split.join(" "))
+        Redis::Semaphore not found, will attempt to deploy without locking.\n
+        WARNING: this could cause undefined behavior if two or more deploys
+        are run simultanously!\n
+        It is recommended that you use semaphore locking. To fix this, add
+        `gem 'redis-semaphore'` to your Gemfile and run `bundle install`.
+      MSG
+
+      return false
+    end
+
+    if !@redis
+      log(<<-MSG.split.join(" "))
+        Redis::Semaphore was found but :redis was not set, will attempt to
+        deploy without locking.\n
+        WARNING: this could cause undefined behavior if two or more deploys
+        are run simultanously!\n
+        It is recommended that you use semaphore locking. To fix this, supply a
+        :redis hash like { host: 'foo', port: 42 } .
+      MSG
+
+      return false
     end
   end
 
@@ -205,30 +214,13 @@ class OpsworksInteractor
       fail(ArgumentError, "instance must be a Aws::OpsWorks::Types::Instance struct")
     end
 
-    all_load_balancers =  @elb_client.describe_load_balancers
-                          .load_balancer_descriptions
+    all_load_balancers = @elb_client.describe_load_balancers
+      .load_balancer_descriptions
 
     load_balancers = detach_from(all_load_balancers, instance)
 
-    lb_wait_params = []
-
-    load_balancers.each do |lb|
-      params = {
-        load_balancer_name: lb.load_balancer_name,
-        instances: [{ instance_id: instance.ec2_instance_id }]
-      }
-
-      remaining_instances = @elb_client
-                            .deregister_instances_from_load_balancer(params)
-                            .instances
-
-      log(<<-MSG.split.join(" "))
-        Will detach instance #{instance.ec2_instance_id} from
-        #{lb.load_balancer_name} (remaining attached instances:
-        #{remaining_instances.map(&:instance_id).join(', ')})
-      MSG
-
-      lb_wait_params << params
+    lb_wait_params = load_balancers.map do |lb|
+      wait_params_for_lb(lb)
     end
 
     if lb_wait_params.any?
@@ -243,6 +235,25 @@ class OpsworksInteractor
     end
 
     load_balancers
+  end
+
+  def wait_params_for_lb(lb)
+    params = {
+      load_balancer_name: lb.load_balancer_name,
+      instances: [{ instance_id: instance.ec2_instance_id }]
+    }
+
+    remaining_instances = @elb_client
+      .deregister_instances_from_load_balancer(params)
+      .instances
+
+    log(<<-MSG.split.join(" "))
+        Will detach instance #{instance.ec2_instance_id} from
+        #{lb.load_balancer_name} (remaining attached instances:
+        #{remaining_instances.map(&:instance_id).join(', ')})
+    MSG
+
+    params
   end
 
   # Accepts load_balancers as array of
