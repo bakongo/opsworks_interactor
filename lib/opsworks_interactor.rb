@@ -222,7 +222,7 @@ class OpsworksInteractor
     load_balancers = detach_from(all_load_balancers, instance)
 
     lb_wait_params = load_balancers.map do |lb|
-      wait_params_for_lb(lb)
+      wait_params_for_lb(lb, instance)
     end
 
     if lb_wait_params.any?
@@ -239,7 +239,7 @@ class OpsworksInteractor
     load_balancers
   end
 
-  def wait_params_for_lb(lb)
+  def wait_params_for_lb(lb, instance)
     params = {
       load_balancer_name: lb.load_balancer_name,
       instances: [{ instance_id: instance.ec2_instance_id }]
