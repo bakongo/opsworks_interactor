@@ -93,34 +93,35 @@ class OpsworksInteractor
   # Register instance back to ELB
   # Wait for AWS to confirm the instance as registered and healthy
   # Once complete, move onto the next instance and repeat
-  def rolling_deploy_without_lock(stack_id:, layer_id:, app_id:)
+  def rolling_deploy_without_lock(stack_id:, layer_id:, app_id:, percent: nil)
     log("Starting opsworks deploy for app #{app_id}\n\n")
 
     instances = @opsworks_client.describe_instances(layer_id: layer_id)[:instances]
       .select { |instance| instance.status == 'online' }
 
-    instances.each do |instance|
-      deploy_to_instance(instance, stack_id, app_id)
+    instances = instances.each_slice((instances.size * percent).ceil) if percent
+    instances.each do |instance_slice|
+      deploy_to_instances(Array(instance_slice), stack_id, app_id)
     end
 
     log("SUCCESS: completed opsworks deploy for all instances on app #{app_id}")
   end
 
-  def deploy_to_instance(instance, stack_id, app_id)
+  def deploy_to_instances(instances, stack_id, app_id)
     begin
-      log("=== Starting deploy for #{instance.hostname} ===")
+      log("=== Starting deploy for #{instances.map(&:hostname).join(', ')} ===")
 
-      load_balancers = detach_from_elbs(instance: instance)
+      load_balancers = detach_from_elbs(instances: instances)
 
       deploy(
         stack_id: stack_id,
         app_id: app_id,
-        instance_id: instance.instance_id
+        instance_ids: instances.map(&:instance_id)
       )
     ensure
-      attach_to_elbs(instance: instance, load_balancers: load_balancers) if load_balancers
+      attach_to_elbs(instances: instances, load_balancers: load_balancers) if load_balancers
 
-      log("=== Done deploying on #{instance.hostname} ===\n\n")
+      log("=== Done deploying on #{instances.map(&:hostname).join(', ')} ===\n\n")
     end
   end
 
@@ -211,18 +212,18 @@ class OpsworksInteractor
   #
   # Does not wait and instead returns an empty array if no load balancers were
   # found for this instance
-  def detach_from_elbs(instance:)
-    unless instance.is_a?(Aws::OpsWorks::Types::Instance)
+  def detach_from_elbs(instances:)
+    unless instances.all? { |instance| instance.is_a?(Aws::OpsWorks::Types::Instance) }
       fail(ArgumentError, "instance must be a Aws::OpsWorks::Types::Instance struct")
     end
 
     all_load_balancers = @elb_client.describe_load_balancers
       .load_balancer_descriptions
 
-    load_balancers = detach_from(all_load_balancers, instance)
+    load_balancers = detach_from(all_load_balancers, instances)
 
     lb_wait_params = load_balancers.map do |lb|
-      wait_params_for_lb(lb, instance)
+      wait_params_for_lb(lb, instances)
     end
 
     if lb_wait_params.any?
@@ -233,16 +234,16 @@ class OpsworksInteractor
         log("✓ detached from #{params[:load_balancer_name]}")
       end
     else
-      log("No load balancers found for instance #{instance.ec2_instance_id}")
+      log("No load balancers found for instance #{instances.map(&:ec2_instance_id).join(', ')}")
     end
 
     load_balancers
   end
 
-  def wait_params_for_lb(lb, instance)
+  def wait_params_for_lb(lb, instances)
     params = {
       load_balancer_name: lb.load_balancer_name,
-      instances: [{ instance_id: instance.ec2_instance_id }]
+      instances: instances.map { |instance| { instance_id: instance.ec2_instance_id } }
     }
 
     remaining_instances = @elb_client
@@ -268,22 +269,22 @@ class OpsworksInteractor
   # Will not include a load balancer in the returned collection if the
   # supplied instance is the ONLY one connected. Detaching the sole remaining
   # instance from a load balancer would probably cause undesired results.
-  def detach_from(load_balancers, instance)
-    check_arguments(instance: instance, load_balancers: load_balancers)
+  def detach_from(load_balancers, instances)
+    check_arguments(instance: instances, load_balancers: load_balancers)
 
     load_balancers.select do |lb|
-      matched_instance = lb.instances.any? do |lb_instance|
-        instance.ec2_instance_id == lb_instance.instance_id
+      matched_instances = lb.instances.any? do |lb_instance|
+        instances.map(&:ec2_instance_id).include?(lb_instance.instance_id)
       end
 
-      if matched_instance && lb.instances.count > 1
+      if matched_instances && lb.instances.count > matched_instances.size
         # We can detach this instance safely because there is at least one other
         # instance to handle traffic
         true
-      elsif matched_instance && lb.instances.count == 1
+      elsif matched_instances && lb.instances.count == matched_instances.size
         # We can't detach this instance because it's the only one
         log(<<-MSG.split.join(" "))
-          Will not detach #{instance.ec2_instance_id} from load balancer
+          Will not detach #{instances.map(&:ec2_instance_id).join(', ')} from load balancer
           #{lb.load_balancer_name} because it is the only instance connected
         MSG
 
@@ -307,8 +308,8 @@ class OpsworksInteractor
   #
   # Otherwise returns a hash of load balancer names each with a
   # Aws::ElasticLoadBalancing::Types::RegisterEndPointsOutput
-  def attach_to_elbs(instance:, load_balancers:)
-    check_arguments(instance: instance, load_balancers: load_balancers)
+  def attach_to_elbs(instances:, load_balancers:)
+    check_arguments(instances: instances, load_balancers: load_balancers)
 
     if load_balancers.empty?
       log("No load balancers to attach to")
@@ -321,7 +322,7 @@ class OpsworksInteractor
     load_balancers.each do |lb|
       params = {
         load_balancer_name: lb.load_balancer_name,
-        instances: [{ instance_id: instance.ec2_instance_id }]
+        instances: instances.map { |instace| { instance_id: instance.ec2_instance_id } }
       }
 
       result = @elb_client.register_instances_with_load_balancer(params)
@@ -330,7 +331,7 @@ class OpsworksInteractor
       lb_wait_params << params
     end
 
-    log("Re-attaching instance #{instance.ec2_instance_id} to all load balancers")
+    log("Re-attaching instance #{instances.map(&:ec2_instance_id).join(', ')} to all load balancers")
 
     # Wait for all load balancers to list the instance as registered
     lb_wait_params.each do |params|
@@ -343,8 +344,8 @@ class OpsworksInteractor
   end
 
   # Fails unless arguments are of the expected types
-  def check_arguments(instance:, load_balancers:)
-    unless instance.is_a?(Aws::OpsWorks::Types::Instance)
+  def check_arguments(instances:, load_balancers:)
+    unless instances.all? { |instance| instance.is_a?(Aws::OpsWorks::Types::Instance) }
       fail(ArgumentError,
            ":instance must be a Aws::OpsWorks::Types::Instance struct")
     end
