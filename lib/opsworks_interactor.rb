@@ -270,7 +270,7 @@ class OpsworksInteractor
   # supplied instance is the ONLY one connected. Detaching the sole remaining
   # instance from a load balancer would probably cause undesired results.
   def detach_from(load_balancers, instances)
-    check_arguments(instance: instances, load_balancers: load_balancers)
+    check_arguments(instances: instances, load_balancers: load_balancers)
 
     load_balancers.select do |lb|
       matched_instances = lb.instances.any? do |lb_instance|
