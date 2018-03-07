@@ -47,11 +47,11 @@ class OpsworksInteractor
   # Blocks until AWS confirms that the deploy was successful
   #
   # Returns a Aws::OpsWorks::Types::CreateDeploymentResult
-  def deploy(stack_id:, app_id:, instance_id:, deploy_timeout: 30 * 60)
+  def deploy(stack_id:, app_id:, instance_ids:, deploy_timeout: 30 * 60)
     response = @opsworks_client.create_deployment(
       stack_id:     stack_id,
       app_id:       app_id,
-      instance_ids: [instance_id],
+      instance_ids: instance_ids,
       command: {
         name: 'deploy',
         args: {
