@@ -277,11 +277,11 @@ class OpsworksInteractor
         instances.map(&:ec2_instance_id).include?(lb_instance.instance_id)
       end
 
-      if matched_instances && lb.instances.count > matched_instances.size
+      if matched_instances && lb.instances.count > instances.size
         # We can detach this instance safely because there is at least one other
         # instance to handle traffic
         true
-      elsif matched_instances && lb.instances.count == matched_instances.size
+      elsif matched_instances && lb.instances.count == instances.size
         # We can't detach this instance because it's the only one
         log(<<-MSG.split.join(" "))
           Will not detach #{instances.map(&:ec2_instance_id).join(', ')} from load balancer
