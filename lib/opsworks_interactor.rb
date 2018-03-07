@@ -251,7 +251,7 @@ class OpsworksInteractor
       .instances
 
     log(<<-MSG.split.join(" "))
-        Will detach instance #{instance.ec2_instance_id} from
+        Will detach instance #{instances.map(&:ec2_instance_id).join(', ')} from
         #{lb.load_balancer_name} (remaining attached instances:
         #{remaining_instances.map(&:instance_id).join(', ')})
     MSG
