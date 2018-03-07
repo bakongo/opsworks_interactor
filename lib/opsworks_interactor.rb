@@ -322,7 +322,7 @@ class OpsworksInteractor
     load_balancers.each do |lb|
       params = {
         load_balancer_name: lb.load_balancer_name,
-        instances: instances.map { |instace| { instance_id: instance.ec2_instance_id } }
+        instances: instances.map { |instance| { instance_id: instance.ec2_instance_id } }
       }
 
       result = @elb_client.register_instances_with_load_balancer(params)
