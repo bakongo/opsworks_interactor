@@ -229,7 +229,9 @@ class OpsworksInteractor
     if lb_wait_params.any?
       lb_wait_params.each do |params|
         # wait for all load balancers to list the instance as deregistered
-        @elb_client.wait_until(:instance_deregistered, params)
+        @elb_client.wait_until(:instance_deregistered, params) do |w|
+          w.max_attempts = nil
+        end
 
         log("✓ detached from #{params[:load_balancer_name]}")
       end
