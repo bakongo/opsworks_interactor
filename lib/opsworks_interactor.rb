@@ -1,5 +1,7 @@
+# coding: utf-8
 require 'aws-sdk'
 require 'timeout'
+require 'facets/string/squish'
 
 class OpsworksInteractor
   begin
