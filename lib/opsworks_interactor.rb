@@ -1,5 +1,6 @@
 require 'aws-sdk'
 require 'timeout'
+
 class OpsworksInteractor
   begin
     require 'redis-semaphore'
@@ -99,15 +100,16 @@ class OpsworksInteractor
     instances = @opsworks_client.describe_instances(layer_id: layer_id)[:instances]
       .select { |instance| instance.status == 'online' }
 
-    instances = instances.each_slice((instances.size * percent).ceil) if percent
+    # instances = instances.each_slice((instances.size * percent).ceil) if percent
     instances.each do |instance_slice|
-      deploy_to_instances(Array(instance_slice), stack_id, app_id)
+      deploy_to_instances([instance_slice], stack_id, app_id)
     end
 
     log("SUCCESS: completed opsworks deploy for all instances on app #{app_id}")
   end
 
   def deploy_to_instances(instances, stack_id, app_id)
+
     begin
       log("=== Starting deploy for #{instances.map(&:hostname).join(', ')} ===")
 
